@@ -92,7 +92,7 @@ SSH. This prevents first-use host key prompts while still pinning the expected
 GitHub host identity. The packaged keys live at:
 
 ```text
-assets/payload/ssh/github_known_hosts
+payload/ssh/github_known_hosts
 ```
 
 When GitHub rotates host keys, update that file from GitHub's official SSH key

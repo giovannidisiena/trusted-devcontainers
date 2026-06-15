@@ -329,7 +329,7 @@ solidity-foundry-node
 src/
   Rust host CLI and orchestration code.
 
-assets/payload/
+payload/
   Files embedded into the tdc binary and synced into target VMs.
 ```
 

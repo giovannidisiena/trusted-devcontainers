@@ -283,10 +283,7 @@ pub struct ImagesBuildArgs {
     pub target: VmTargetArgs,
     #[arg(long, default_value = "trusted")]
     pub namespace: String,
-    #[arg(
-        long,
-        help = "Image version tag. Defaults to the packaged VERSION file"
-    )]
+    #[arg(long, help = "Image version tag. Defaults to the tdc package version")]
     pub version: Option<String>,
 }
 

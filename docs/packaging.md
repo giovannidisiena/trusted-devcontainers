@@ -36,8 +36,8 @@ Do not make `curl | sh` the primary path until release artifacts are published
 and versioned.
 
 The installed artifact is a single host binary named `tdc`. VM-side files are
-embedded at compile time from `assets/payload/`, then materialized into a
-temporary staging directory and synced to the target VM when needed.
+embedded at compile time from `payload/`, then materialized into a temporary
+staging directory and synced to the target VM when needed.
 
 This keeps installation simple while preserving reviewable, modular payload
 files in the source tree.
@@ -98,21 +98,14 @@ Prefer tagged installs for repeatability.
 
 ## Versioning
 
-Keep these versions in lockstep:
-
-```text
-Cargo.toml
-  package.version
-
-assets/payload/VERSION
-  trusted image tag used by VM-side payload scripts
-```
+`Cargo.toml` is the source of truth for the package version. `tdc` uses that
+same package version as the default trusted image tag and writes a generated
+`VERSION` file only into the staged payload that is synced to each VM.
 
 For example, release `v0.1.1` should set:
 
 ```text
 Cargo.toml: version = "0.1.1"
-assets/payload/VERSION: 0.1.1
 Git tag: v0.1.1
 ```
 
@@ -151,6 +144,12 @@ git tag -a v0.1.1 -m "v0.1.1"
 git push origin main
 git push origin v0.1.1
 ```
+
+If the protected publish job fails after the tag workflow has already prepared
+and reviewed release assets, fix the workflow on `main` and rerun the release
+workflow manually with the same tag. Do not bump the package version for an
+infrastructure-only publish failure. Bump only when the released package
+contents change, and do not move a tag that has already been pushed.
 
 ## GitHub Actions
 

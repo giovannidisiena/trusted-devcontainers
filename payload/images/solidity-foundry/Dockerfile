@@ -1,8 +1,8 @@
 ARG IMAGE_NAMESPACE=trusted
-ARG VERSION=0.1.0
+ARG VERSION
 FROM ${IMAGE_NAMESPACE}/base:${VERSION}
 
-ARG VERSION=0.1.0
+ARG VERSION
 ARG BUILD_DATE=unknown
 ARG VCS_REF=unknown
 ARG FOUNDRY_VERSION=1.0.0
@@ -31,4 +31,3 @@ RUN chmod +x /tmp/install-foundry.sh /tmp/install-solc-select.sh \
 
 USER auditor
 WORKDIR /workspace
-

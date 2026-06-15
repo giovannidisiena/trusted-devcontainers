@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ARG VERSION=0.1.0
+ARG VERSION
 ARG BUILD_DATE=unknown
 ARG VCS_REF=unknown
 ARG USERNAME=auditor
@@ -46,4 +46,3 @@ RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
 
 USER ${USERNAME}
 WORKDIR /workspace
-

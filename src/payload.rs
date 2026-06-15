@@ -11,16 +11,10 @@ use tempfile::{Builder, TempDir};
 
 use crate::process;
 
-static PAYLOAD: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets/payload");
+static PAYLOAD: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/payload");
 
 pub fn packaged_version() -> Result<String> {
-    let version = PAYLOAD
-        .get_file("VERSION")
-        .context("embedded payload is missing VERSION")?;
-
-    Ok(String::from_utf8_lossy(version.contents())
-        .trim()
-        .to_owned())
+    Ok(env!("CARGO_PKG_VERSION").to_owned())
 }
 
 pub fn materialize() -> Result<TempDir> {
@@ -30,7 +24,15 @@ pub fn materialize() -> Result<TempDir> {
         .context("failed to create payload staging directory")?;
 
     write_dir(&PAYLOAD, temp.path())?;
+    write_payload_version(temp.path())?;
     Ok(temp)
+}
+
+fn write_payload_version(base: &Path) -> Result<()> {
+    let target = base.join("VERSION");
+    fs::write(&target, format!("{}\n", packaged_version()?))
+        .with_context(|| format!("failed to write {}", target.display()))?;
+    Ok(())
 }
 
 pub fn sync_to_vm(host: &str) -> Result<()> {
@@ -126,7 +128,6 @@ mod tests {
 
     #[test]
     fn embeds_expected_payload_files() {
-        assert!(PAYLOAD.get_file("VERSION").is_some());
         assert!(PAYLOAD.get_file("bin/build-images").is_some());
         assert!(PAYLOAD.get_file("bin/devcontainer-use").is_some());
         assert!(PAYLOAD.get_file("ssh/github_known_hosts").is_some());
@@ -141,7 +142,8 @@ mod tests {
     #[test]
     fn materializes_payload() {
         let temp = materialize().unwrap();
-        assert!(temp.path().join("VERSION").is_file());
+        let version = fs::read_to_string(temp.path().join("VERSION")).unwrap();
+        assert_eq!(version.trim(), env!("CARGO_PKG_VERSION"));
         assert!(temp.path().join("bin/build-images").is_file());
         assert!(temp.path().join("images/base/Dockerfile").is_file());
     }
