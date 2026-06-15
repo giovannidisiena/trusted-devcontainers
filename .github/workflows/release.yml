@@ -25,7 +25,7 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
@@ -96,7 +96,7 @@ jobs:
           (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
 
       - name: Upload release assets for review
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-assets
           path: |
@@ -112,7 +112,7 @@ jobs:
       contents: read
     steps:
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: dist
@@ -146,7 +146,7 @@ jobs:
       contents: write
     steps:
       - name: Download reviewed release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: dist
