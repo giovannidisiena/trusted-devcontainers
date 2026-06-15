@@ -1,0 +1,15 @@
+{
+  "name": "trusted-base",
+  "image": "trusted/base:0.1.0",
+  "remoteUser": "auditor",
+  "runArgs": [
+    "--init",
+    "--security-opt=no-new-privileges:true",
+    "--cap-drop=ALL",
+    "--pids-limit=4096"
+  ],
+  "containerEnv": {
+    "SHELL": "/bin/bash"
+  }
+}
+

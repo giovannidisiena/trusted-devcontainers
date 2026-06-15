@@ -1,0 +1,16 @@
+{
+  "name": "trusted-solidity-foundry",
+  "image": "trusted/solidity-foundry:0.1.0",
+  "remoteUser": "auditor",
+  "runArgs": [
+    "--init",
+    "--security-opt=no-new-privileges:true",
+    "--cap-drop=ALL",
+    "--pids-limit=4096"
+  ],
+  "containerEnv": {
+    "SHELL": "/bin/bash",
+    "FOUNDRY_DISABLE_NIGHTLY_WARNING": "true"
+  }
+}
+

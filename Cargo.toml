@@ -1,0 +1,30 @@
+[package]
+name = "trusted-devcontainers"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Provision trusted Lima devcontainer workspaces"
+license = "MIT"
+repository = "https://github.com/giovannidisiena/trusted-devcontainers"
+publish = false
+include = [
+  "/Cargo.lock",
+  "/Cargo.toml",
+  "/README.md",
+  "/LICENSE",
+  "/assets/payload/**",
+  "/docs/**",
+  "/src/**",
+]
+
+[[bin]]
+name = "tdc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
+include_dir = "0.7"
+tempfile = "3.10"

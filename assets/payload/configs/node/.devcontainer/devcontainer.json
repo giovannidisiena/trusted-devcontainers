@@ -1,0 +1,17 @@
+{
+  "name": "trusted-node",
+  "image": "trusted/node:0.1.0",
+  "remoteUser": "auditor",
+  "runArgs": [
+    "--init",
+    "--security-opt=no-new-privileges:true",
+    "--cap-drop=ALL",
+    "--pids-limit=4096"
+  ],
+  "containerEnv": {
+    "SHELL": "/bin/bash",
+    "NPM_CONFIG_IGNORE_SCRIPTS": "true",
+    "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"
+  }
+}
+

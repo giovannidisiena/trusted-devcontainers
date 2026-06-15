@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+payload_root="$(cd -- "${script_dir}/.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  build-images [profile] [--namespace trusted] [--version 0.1.0]
+
+Profiles:
+  all
+  base
+  node
+  solidity-foundry
+  solidity-foundry-node
+USAGE
+}
+
+profile="all"
+namespace="trusted"
+version="$(<"${payload_root}/VERSION")"
+
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+  profile="$1"
+  shift
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --namespace)
+      namespace="${2:?missing value for --namespace}"
+      shift 2
+      ;;
+    --version)
+      version="${2:?missing value for --version}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+case "${profile}" in
+  all|base|node|solidity-foundry|solidity-foundry-node)
+    ;;
+  *)
+    echo "Unknown profile: ${profile}" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+set -a
+# shellcheck disable=SC1091
+source "${payload_root}/tool-versions.env"
+set +a
+
+build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+vcs_ref="package"
+
+docker_build() {
+  local image="$1"
+  local dockerfile="$2"
+
+  docker build \
+    --build-arg "IMAGE_NAMESPACE=${namespace}" \
+    --build-arg "VERSION=${version}" \
+    --build-arg "BUILD_DATE=${build_date}" \
+    --build-arg "VCS_REF=${vcs_ref}" \
+    --build-arg "FOUNDRY_VERSION=${FOUNDRY_VERSION}" \
+    --build-arg "SOLC_SELECT_VERSION=${SOLC_SELECT_VERSION}" \
+    --build-arg "NODE_VERSION=${NODE_VERSION}" \
+    --build-arg "PNPM_VERSION=${PNPM_VERSION}" \
+    -t "${namespace}/${image}:${version}" \
+    -f "${payload_root}/${dockerfile}" \
+    "${payload_root}"
+}
+
+build_base() {
+  docker_build "base" "images/base/Dockerfile"
+}
+
+build_node() {
+  build_base
+  docker_build "node" "images/node/Dockerfile"
+}
+
+build_solidity_foundry() {
+  build_base
+  docker_build "solidity-foundry" "images/solidity-foundry/Dockerfile"
+}
+
+build_solidity_foundry_node() {
+  build_solidity_foundry
+  docker_build "solidity-foundry-node" "images/solidity-foundry-node/Dockerfile"
+}
+
+case "${profile}" in
+  all)
+    build_base
+    docker_build "node" "images/node/Dockerfile"
+    docker_build "solidity-foundry" "images/solidity-foundry/Dockerfile"
+    docker_build "solidity-foundry-node" "images/solidity-foundry-node/Dockerfile"
+    ;;
+  base)
+    build_base
+    ;;
+  node)
+    build_node
+    ;;
+  solidity-foundry)
+    build_solidity_foundry
+    ;;
+  solidity-foundry-node)
+    build_solidity_foundry_node
+    ;;
+esac
+
+echo "Built profile '${profile}' with namespace '${namespace}' and version '${version}'."

@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare release assets
+    runs-on: macos-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          case "${tag}" in
+            v*) ;;
+            *)
+              echo "release tag must start with v: ${tag}" >&2
+              exit 1
+              ;;
+          esac
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify version metadata
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          version="${tag#v}"
+          cargo_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          payload_version="$(tr -d '[:space:]' < assets/payload/VERSION)"
+
+          if [[ "${cargo_version}" != "${version}" ]]; then
+            echo "Cargo.toml version ${cargo_version} does not match ${tag}" >&2
+            exit 1
+          fi
+
+          if [[ "${payload_version}" != "${version}" ]]; then
+            echo "assets/payload/VERSION ${payload_version} does not match ${tag}" >&2
+            exit 1
+          fi
+
+      - name: Run release checks
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo package --locked --list
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Assemble release assets
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m)"
+          package="tdc-${tag}-${os}-${arch}"
+
+          mkdir -p "dist/${package}"
+          cp target/release/tdc "dist/${package}/tdc"
+          cargo run --locked -- manpage --raw > "dist/${package}/tdc.1"
+          cargo run --locked -- completion zsh > "dist/${package}/_tdc"
+          cp README.md "dist/${package}/README.md"
+          cp -R docs "dist/${package}/docs"
+
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
+
+      - name: Upload release assets for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  review:
+    name: Review release assets
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      contents: read
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify checksum and list contents
+        run: |
+          echo "Release tag: ${{ needs.prepare.outputs.tag }}"
+          ls -lah dist
+          cd dist
+          sha256sum -c *.sha256
+          echo
+          echo "Tarball contents:"
+          tar -tzf *.tar.gz | sed -n '1,200p'
+
+      - name: Review instructions
+        run: |
+          cat <<'MSG'
+          Review this job's checksum and tarball listing before approving the
+          protected publish job. The next job is the only job with permission to
+          write a GitHub Release.
+          MSG
+
+  publish:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - review
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download reviewed release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify checksum before publish
+        run: |
+          cd dist
+          sha256sum -c *.sha256
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ needs.prepare.outputs.tag }}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.tar.gz dist/*.sha256 --clobber
+          else
+            gh release create "${tag}" dist/*.tar.gz dist/*.sha256 \
+              --title "${tag}" \
+              --notes "Release ${tag}."
+          fi

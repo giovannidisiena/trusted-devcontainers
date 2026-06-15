@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  devcontainer-use <base|node|solidity-foundry|solidity-foundry-node> [repo-dir]
+
+Writes a trusted managed devcontainer config under:
+  <repo-dir>/.devcontainer
+
+The generated .devcontainer directory is added to .git/info/exclude so it stays
+local to the VM checkout.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+profile="${1:?missing profile}"
+repo="${2:-$PWD}"
+
+case "${profile}" in
+  base|node|solidity-foundry|solidity-foundry-node)
+    ;;
+  *)
+    echo "Unknown profile: ${profile}" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+payload_root="${TDC_PAYLOAD_ROOT:-$HOME/trusted-devcontainers}"
+templates="${payload_root}/configs"
+version="$(<"${payload_root}/VERSION")"
+
+if [[ ! -d "${templates}/${profile}/.devcontainer" ]]; then
+  echo "Missing trusted config: ${templates}/${profile}/.devcontainer" >&2
+  exit 1
+fi
+
+repo="$(cd "${repo}" && pwd -P)"
+dest="${repo}/.devcontainer"
+marker="${dest}/.tdc-managed"
+
+if [[ -e "${dest}" && ! -f "${marker}" ]]; then
+  echo "Refusing to replace existing devcontainer config: ${dest}" >&2
+  echo "Remove it first if this checkout should use a trusted-devcontainers profile." >&2
+  exit 1
+fi
+
+rm -rf "${dest}"
+mkdir -p "${dest}"
+cp -a "${templates}/${profile}/.devcontainer/." "${dest}/"
+
+case "${profile}" in
+  base)
+    image="base"
+    ;;
+  node)
+    image="node"
+    ;;
+  solidity-foundry)
+    image="solidity-foundry"
+    ;;
+  solidity-foundry-node)
+    image="solidity-foundry-node"
+    ;;
+esac
+
+sed -i -E "s|\"image\": \"trusted/${image}:[^\"]+\"|\"image\": \"trusted/${image}:${version}\"|" \
+  "${dest}/devcontainer.json"
+
+cat > "${marker}" <<EOF
+profile=${profile}
+version=${version}
+EOF
+
+exclude="$(git -C "${repo}" rev-parse --git-path info/exclude 2>/dev/null || true)"
+if [[ -n "${exclude}" ]]; then
+  case "${exclude}" in
+    /*)
+      ;;
+    *)
+      exclude="${repo}/${exclude}"
+      ;;
+  esac
+
+  mkdir -p "$(dirname "${exclude}")"
+  touch "${exclude}"
+  if ! grep -qxF ".devcontainer/" "${exclude}"; then
+    printf '\n.devcontainer/\n' >> "${exclude}"
+  fi
+fi
+
+echo "Configured '${profile}' devcontainer for ${repo}"
+echo "Config written to: ${dest}"
+echo "Open the repo through VS Code Remote-SSH, then run: Dev Containers: Reopen in Container"
