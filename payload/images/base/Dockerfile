@@ -16,6 +16,7 @@ LABEL org.opencontainers.image.title="trusted/base" \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -41,8 +42,8 @@ RUN apt-get update \
 
 RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
     && useradd --uid "${USER_UID}" --gid "${USER_GID}" --create-home --shell /bin/bash "${USERNAME}" \
-    && mkdir -p /workspace \
-    && chown "${USERNAME}:${USERNAME}" /workspace
+    && mkdir -p /workspace "/home/${USERNAME}/.local/bin" \
+    && chown -R "${USERNAME}:${USERNAME}" /workspace "/home/${USERNAME}/.local"
 
 USER ${USERNAME}
 WORKDIR /workspace

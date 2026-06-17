@@ -11,6 +11,12 @@
   "containerEnv": {
     "SHELL": "/bin/bash",
     "FOUNDRY_DISABLE_NIGHTLY_WARNING": "true"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "NomicFoundation.hardhat-solidity"
+      ]
+    }
   }
 }
-
