@@ -267,6 +267,11 @@ work.
 
 ## Images
 
+Trusted images are built and stored inside the client VM's Docker daemon. They
+are not pushed to Docker Hub. `tdc images build` verifies that the expected
+local image tag exists after a successful build, and `tdc vm status` reports
+which trusted image tags are present for the installed `tdc` version.
+
 Build all trusted images inside a VM:
 
 ```bash
@@ -297,6 +302,13 @@ tdc devcontainer use \
   --client exampleco \
   --repo protocol \
   --profile solidity-foundry
+```
+
+`tdc devcontainer use` checks that the matching local trusted image exists
+before writing the config. If the image is missing, build it first:
+
+```bash
+tdc images build solidity-foundry --client exampleco
 ```
 
 The config is written inside the VM under the cloned repository:

@@ -42,8 +42,34 @@ staging directory and synced to the target VM when needed.
 This keeps installation simple while preserving reviewable, modular payload
 files in the source tree.
 
+During local development, use `cargo install --path . --locked --force` when
+reinstalling the same package version after changing embedded payload files.
+
 See [lifecycle.md](lifecycle.md) for normal user installation, update, and
 cleanup steps.
+
+## Future Prebuilt Images
+
+The current supported image workflow is VM-local builds from the reviewed
+payload embedded in `tdc`. This keeps trust boundaries simple: the client VM
+builds the image it will run, and no registry is part of the routine setup path.
+
+A future release path can add prebuilt images, most likely through GitHub
+Container Registry, to make setup faster. Treat that as a separate hardening
+project, not a shortcut around local builds. Minimum requirements:
+
+```text
+build images only from protected release jobs
+publish immutable tags and pin runtime references by digest
+sign images and verify signatures before use
+publish SBOM and provenance artifacts for each image
+keep client credentials and repo contents out of images
+preserve local VM builds as a fallback and audit path
+make cache invalidation explicit when payload or tool versions change
+```
+
+Until that release path exists, `trusted/<profile>:<version>` should be treated
+as a local VM image name, not a public registry dependency.
 
 ## Shell Completion
 

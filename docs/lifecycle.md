@@ -308,12 +308,22 @@ credential and remove or revoke it afterward.
 The normal `tdc vm new` flow builds the selected image and writes the
 devcontainer config. You usually do not need to run these separately.
 
+Check VM, snapshot, and trusted image status:
+
+```bash
+tdc vm status --client exampleco
+```
+
 Build or rebuild images after `--skip-build` or payload changes:
 
 ```bash
 tdc images build base --client exampleco
 tdc images build solidity-foundry-node --client exampleco
 ```
+
+`tdc images build` verifies that the expected local image tag exists after the
+build. These images are local to the client VM; they are not published registry
+images.
 
 Reapply a devcontainer profile:
 
@@ -323,6 +333,11 @@ tdc devcontainer use \
   --repo protocol \
   --profile base
 ```
+
+`tdc devcontainer use` checks for the matching local image before writing the
+config. If it is missing, the command fails with the exact `tdc images build`
+command to run. This keeps VS Code from being the first tool to discover a
+missing local image and trying to pull `trusted/...` from a public registry.
 
 The devcontainer config is written to:
 
@@ -353,6 +368,14 @@ From a local clone:
 ```bash
 git pull
 cargo install --path . --locked
+```
+
+When reinstalling the same package version during local development, especially
+after changing files under `payload/`, force the reinstall so Cargo replaces the
+existing binary:
+
+```bash
+cargo install --path . --locked --force
 ```
 
 From a published Git tag:

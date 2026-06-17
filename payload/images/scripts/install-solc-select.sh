@@ -10,5 +10,17 @@ python3 -m venv /opt/solc-select
 ln -sf /opt/solc-select/bin/solc-select /usr/local/bin/solc-select
 ln -sf /opt/solc-select/bin/solc /usr/local/bin/solc
 
-solc-select --version
+actual_version="$(
+  /opt/solc-select/bin/python - <<'PY'
+from importlib.metadata import version
 
+print(version("solc-select"))
+PY
+)"
+
+if [[ "${actual_version}" != "${SOLC_SELECT_VERSION}" ]]; then
+  echo "installed solc-select ${actual_version}, expected ${SOLC_SELECT_VERSION}" >&2
+  exit 1
+fi
+
+solc-select --help >/dev/null

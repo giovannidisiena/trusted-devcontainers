@@ -473,9 +473,13 @@ fn vm_new(args: VmNewArgs) -> Result<()> {
 
     if !args.skip_build {
         build_images_on_vm(&host, args.profile.as_str(), "trusted", None)?;
+        ensure_profile_image_available(&host, &args.profile, &args.client, &vm)?;
     }
 
     if !args.skip_clone {
+        if args.skip_build {
+            print_skip_build_image_warning(&args.client, &vm, &args.profile);
+        }
         apply_devcontainer_in_vm(&host, &repo.repo, &args.profile)?;
         if !args.no_snapshots {
             snapshot_vm(&vm, "trusted-devcontainer-ready")?;
@@ -622,6 +626,7 @@ fn vm_status(args: VmTargetArgs) -> Result<()> {
     })?;
 
     print_snapshot_status_if_available(&vm)?;
+    print_trusted_image_status_if_available(&vm)?;
 
     Ok(())
 }
@@ -731,15 +736,12 @@ fn images_build(args: ImagesBuildArgs) -> Result<()> {
         "tdc images build [--client <CLIENT>|--vm <VM>] [PROFILE]",
     )?;
     let host = model::lima_host(&vm);
+    let profile = args.profile.as_str();
 
     ensure_host_ssh_include()?;
     payload::sync_to_vm(&host)?;
-    build_images_on_vm(
-        &host,
-        args.profile.as_str(),
-        &args.namespace,
-        args.version.as_deref(),
-    )
+    build_images_on_vm(&host, profile, &args.namespace, args.version.as_deref())?;
+    ensure_built_images_available(&host, profile, &args.namespace, args.version.as_deref())
 }
 
 fn devcontainer_use(args: DevcontainerUseArgs) -> Result<()> {
@@ -761,6 +763,7 @@ fn devcontainer_use(args: DevcontainerUseArgs) -> Result<()> {
 
     ensure_host_ssh_include()?;
     payload::sync_to_vm(&host)?;
+    ensure_profile_image_available(&host, &args.profile, &args.client, &vm)?;
     apply_devcontainer_in_vm(&host, &repo.repo, &args.profile)
 }
 
@@ -881,18 +884,44 @@ fn set_permissions(path: &PathBuf, mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn vm_exists(vm: &str) -> Result<bool> {
+fn lima_vm_status(vm: &str) -> Result<Option<String>> {
     let output = process::capture({
         let mut command = Command::new("limactl");
-        command.arg("list").arg("--format").arg("{{.Name}}");
+        command
+            .arg("list")
+            .arg("--format")
+            .arg("{{.Name}}\t{{.Status}}");
         command
     })?;
 
-    Ok(output.lines().any(|line| line == vm))
+    for line in output.lines() {
+        let Some((name, status)) = line.split_once('\t') else {
+            continue;
+        };
+        if name == vm {
+            return Ok(Some(status.trim().to_owned()));
+        }
+    }
+
+    Ok(None)
+}
+
+fn vm_exists(vm: &str) -> Result<bool> {
+    Ok(lima_vm_status(vm)?.is_some())
+}
+
+fn vm_is_running(vm: &str) -> Result<bool> {
+    Ok(lima_vm_status(vm)?
+        .as_deref()
+        .is_some_and(|status| status.eq_ignore_ascii_case("running")))
 }
 
 fn start_vm(vm: &str, vm_type: &str, cpus: u16, memory: u16, disk: u16) -> Result<()> {
     if vm_exists(vm)? {
+        if vm_is_running(vm)? {
+            return Ok(());
+        }
+
         return process::run({
             let mut command = Command::new("limactl");
             command.arg("start").arg(vm);
@@ -900,20 +929,35 @@ fn start_vm(vm: &str, vm_type: &str, cpus: u16, memory: u16, disk: u16) -> Resul
         });
     }
 
-    process::run({
-        let mut command = Command::new("limactl");
-        command
-            .arg("start")
-            .arg("--yes")
-            .arg(format!("--name={vm}"))
-            .arg(format!("--cpus={cpus}"))
-            .arg(format!("--memory={memory}"))
-            .arg(format!("--disk={disk}"))
-            .arg(format!("--vm-type={vm_type}"))
-            .arg("--mount-none")
-            .arg("template:docker");
-        command
-    })
+    let mut command = Command::new("limactl");
+    command
+        .arg("start")
+        .arg("--yes")
+        .arg(format!("--name={vm}"))
+        .arg(format!("--cpus={cpus}"))
+        .arg(format!("--memory={memory}"))
+        .arg(format!("--disk={disk}"))
+        .arg(format!("--vm-type={vm_type}"))
+        .arg("--mount-none")
+        .arg("template:docker");
+
+    let display = process::display_command(&command);
+    let status = command
+        .status()
+        .with_context(|| format!("failed to start {display}"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    if vm_is_running(vm)? {
+        eprintln!(
+            "warning: {display} exited with {status}, but VM '{vm}' is running; continuing setup"
+        );
+        return Ok(());
+    }
+
+    bail!("{display} exited with {status}")
 }
 
 fn ensure_vm_type_prerequisites(vm_type: &str) -> Result<()> {
@@ -1117,6 +1161,146 @@ fi
     )
 }
 
+fn ensure_profile_image_available(
+    host: &str,
+    profile: &Profile,
+    client: &str,
+    vm: &str,
+) -> Result<()> {
+    let version = payload::packaged_version()?;
+    let image_ref = trusted_image_ref(profile.as_str(), &version);
+    if image_exists_in_vm(host, &image_ref)? {
+        return Ok(());
+    }
+
+    let target = build_target_selector(client, vm);
+    bail!(
+        "missing trusted image in VM: {image_ref}\n\nBuild it with:\n  tdc images build {} {target}\n\nThen retry the devcontainer operation.",
+        profile.as_str()
+    )
+}
+
+fn ensure_built_images_available(
+    host: &str,
+    profile: &str,
+    namespace: &str,
+    version: Option<&str>,
+) -> Result<()> {
+    let version = version_or_packaged(version)?;
+    let mut missing = Vec::new();
+
+    for image_ref in image_refs_for_build_target(profile, namespace, &version) {
+        if !image_exists_in_vm(host, &image_ref)? {
+            missing.push(image_ref);
+        }
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    bail!(
+        "image build completed, but expected image(s) are missing in the VM:\n  {}",
+        missing.join("\n  ")
+    )
+}
+
+fn image_exists_in_vm(host: &str, image_ref: &str) -> Result<bool> {
+    let output = Command::new("ssh")
+        .arg(host)
+        .arg("docker")
+        .arg("image")
+        .arg("inspect")
+        .arg(image_ref)
+        .arg("--format")
+        .arg("{{.Id}}")
+        .output()
+        .with_context(|| format!("failed to inspect image {image_ref} on {host}"))?;
+
+    Ok(output.status.success())
+}
+
+fn print_trusted_image_status_if_available(vm: &str) -> Result<()> {
+    if !process::command_exists("ssh") {
+        eprintln!("Trusted images: unavailable; ssh is not on PATH");
+        return Ok(());
+    }
+
+    let version = payload::packaged_version()?;
+    let image_refs = image_refs_for_build_target("all", "trusted", &version);
+    let mut args = vec![version];
+    args.extend(image_refs);
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let host = model::lima_host(vm);
+
+    if let Err(err) = process::ssh_script(
+        &host,
+        &args,
+        r#"set -euo pipefail
+
+version="$1"
+shift
+
+echo "Trusted images (${version}):"
+for image_ref in "$@"; do
+  if docker image inspect "${image_ref}" >/dev/null 2>&1; then
+    echo "  ok: ${image_ref}"
+  else
+    echo "  missing: ${image_ref}"
+  fi
+done
+"#,
+    ) {
+        eprintln!("Trusted images: unavailable ({err:#})");
+    }
+
+    Ok(())
+}
+
+fn print_skip_build_image_warning(client: &str, vm: &str, profile: &Profile) {
+    let target = build_target_selector(client, vm);
+    eprintln!(
+        "warning: --skip-build leaves the devcontainer config pointing at a local image that may not exist"
+    );
+    eprintln!(
+        "warning: build it before opening VS Code: tdc images build {} {target}",
+        profile.as_str()
+    );
+}
+
+fn version_or_packaged(version: Option<&str>) -> Result<String> {
+    match version {
+        Some(version) if !version.is_empty() => Ok(version.to_owned()),
+        _ => payload::packaged_version(),
+    }
+}
+
+fn trusted_image_ref(image: &str, version: &str) -> String {
+    image_ref("trusted", image, version)
+}
+
+fn image_ref(namespace: &str, image: &str, version: &str) -> String {
+    format!("{namespace}/{image}:{version}")
+}
+
+fn image_refs_for_build_target(profile: &str, namespace: &str, version: &str) -> Vec<String> {
+    match profile {
+        "all" => ["base", "node", "solidity-foundry", "solidity-foundry-node"]
+            .into_iter()
+            .map(|image| image_ref(namespace, image, version))
+            .collect(),
+        image => vec![image_ref(namespace, image, version)],
+    }
+}
+
+fn build_target_selector(client: &str, vm: &str) -> String {
+    if vm == model::vm_default(client) {
+        format!("--client {client}")
+    } else {
+        format!("--vm {vm}")
+    }
+}
+
 fn apply_devcontainer_in_vm(host: &str, repo: &str, profile: &Profile) -> Result<()> {
     process::ssh_script(
         host,
@@ -1265,8 +1449,9 @@ fn print_next_steps(
     println!();
     println!("Next:");
     if skip_build {
+        let target = build_target_selector(client, vm);
         println!(
-            "  1. Build the profile image: tdc images build {} --client {client}",
+            "  1. Build the profile image: tdc images build {} {target}",
             profile.as_str()
         );
         println!("  2. VS Code: Remote-SSH: Connect to Host -> {host}");
@@ -1319,5 +1504,35 @@ mod tests {
         assert!(!script.contains(":VM:_default"));
         assert!(!script.contains("'__complete:"));
         assert!(!script.contains("\n(__complete)"));
+    }
+
+    #[test]
+    fn renders_image_refs_for_single_and_all_build_targets() {
+        assert_eq!(
+            image_refs_for_build_target("node", "trusted", "0.1.1"),
+            vec!["trusted/node:0.1.1"]
+        );
+
+        assert_eq!(
+            image_refs_for_build_target("all", "trusted", "0.1.1"),
+            vec![
+                "trusted/base:0.1.1",
+                "trusted/node:0.1.1",
+                "trusted/solidity-foundry:0.1.1",
+                "trusted/solidity-foundry-node:0.1.1",
+            ]
+        );
+    }
+
+    #[test]
+    fn selects_build_target_flag_for_default_and_custom_vm_names() {
+        assert_eq!(
+            build_target_selector("polymarket", "client-polymarket"),
+            "--client polymarket"
+        );
+        assert_eq!(
+            build_target_selector("polymarket", "audit-polymarket"),
+            "--vm audit-polymarket"
+        );
     }
 }

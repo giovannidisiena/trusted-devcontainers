@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/giovannidisiena/trusted-devcontainers"
 publish = false
 include = [
+  "/build.rs",
   "/Cargo.lock",
   "/Cargo.toml",
   "/README.md",
