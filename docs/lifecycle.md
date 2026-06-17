@@ -398,7 +398,7 @@ cargo install --path . --locked --force
 From a published Git tag:
 
 ```bash
-cargo install --git https://github.com/<org>/trusted-devcontainers --tag v0.1.1 --locked
+cargo install --git https://github.com/<org>/trusted-devcontainers --tag v0.1.2 --locked
 ```
 
 Regenerate shell completions after updating:
