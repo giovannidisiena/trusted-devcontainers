@@ -61,6 +61,11 @@ pub enum VmCommand {
     #[command(about = "Manage VM-local GitHub keys")]
     Key(VmKeyArgs),
     #[command(
+        about = "Open a VM checkout in VS Code",
+        override_usage = "tdc vm code [--container] [OPTIONS] [--client <CLIENT>|--vm <VM>] [--repo <REPO>|--repo-url <URL>|--path <PATH>]"
+    )]
+    Code(VmCodeOpenArgs),
+    #[command(
         about = "Open an interactive SSH session",
         override_usage = "tdc vm ssh [--client <CLIENT>|--vm <VM>]"
     )]
@@ -207,6 +212,33 @@ pub struct VmKeyRemoveArgs {
     pub target: VmClientTargetArgs,
     #[arg(long, help = "Confirm removal of the VM-local GitHub key")]
     pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct VmCodeOpenArgs {
+    #[command(flatten)]
+    pub target: VmTargetArgs,
+    #[command(flatten)]
+    pub repo: RepoInputArgs,
+    #[arg(long, help = "Open the checkout directly in its VS Code devcontainer")]
+    pub container: bool,
+    #[arg(
+        long,
+        help = "Path inside the VM. Relative paths are resolved from the VM home directory"
+    )]
+    pub path: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "reuse_window",
+        help = "Open in a new VS Code window. This is the default unless --reuse-window is set"
+    )]
+    pub new_window: bool,
+    #[arg(
+        long,
+        conflicts_with = "new_window",
+        help = "Reuse the active VS Code window"
+    )]
+    pub reuse_window: bool,
 }
 
 #[derive(Debug, Args)]

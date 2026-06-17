@@ -120,14 +120,21 @@ SSH host: lima-client-exampleco
 Repo path: ~/work/protocol
 ```
 
-Open VS Code:
+Open VS Code over Remote SSH:
 
-```text
-1. Remote-SSH: Connect to Host -> lima-client-exampleco
-2. Open folder: ~/work/protocol
-3. If prompted, trust only this repository folder when you are ready to run it
-4. Dev Containers: Reopen in Container
+```bash
+tdc vm code --client exampleco --repo protocol
 ```
+
+Open the same checkout in its devcontainer:
+
+```bash
+tdc vm code --container --client exampleco --repo protocol
+```
+
+The devcontainer open path uses VS Code's Remote Containers URI format. If it
+does not open correctly, use `tdc vm code` and then run
+`Dev Containers: Reopen in Container` from the VS Code command palette.
 
 The VS Code trust prompt is expected. You can initially choose restricted mode
 to inspect the repository, but Dev Containers requires trusting the folder
