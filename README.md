@@ -52,6 +52,9 @@ exec zsh -l
 
 `tdc` does not edit shell startup files during installation.
 
+The zsh completion script includes dynamic completion for local Lima VM names,
+client slugs derived from `client-*` VM names, and snapshot tags.
+
 After updating `tdc`, regenerate the completion file so new commands and flags
 show up in zsh:
 

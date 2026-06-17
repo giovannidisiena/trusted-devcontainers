@@ -54,9 +54,239 @@ pub fn run(cli: Cli) -> Result<()> {
 }
 
 fn completion(shell: clap_complete::Shell) -> Result<()> {
+    if shell == clap_complete::Shell::Zsh {
+        return zsh_completion();
+    }
+
     let mut command = Cli::command();
     clap_complete::generate(shell, &mut command, "tdc", &mut io::stdout());
     Ok(())
+}
+
+fn zsh_completion() -> Result<()> {
+    let script = zsh_completion_script()?;
+    io::stdout()
+        .write_all(script.as_bytes())
+        .context("failed to write zsh completion")?;
+    Ok(())
+}
+
+fn zsh_completion_script() -> Result<String> {
+    let mut command = Cli::command();
+    let mut output = Vec::new();
+    clap_complete::generate(clap_complete::Shell::Zsh, &mut command, "tdc", &mut output);
+
+    let mut script = String::from_utf8(output).context("failed to render zsh completion")?;
+    script = script.replace(":CLIENT:_default", ":CLIENT:_tdc_complete_clients");
+    script = script.replace(":VM:_default", ":VM:_tdc_complete_vms");
+    script = script.replace(":TAG:_default", ":TAG:_tdc_complete_snapshot_tags");
+    script.push_str(ZSH_DYNAMIC_COMPLETIONS);
+    Ok(script)
+}
+
+const ZSH_DYNAMIC_COMPLETIONS: &str = r#"
+
+_tdc_complete_clients() {
+    local -a clients
+    clients=("${(@f)$(_call_program tdc-clients tdc __complete clients 2>/dev/null)}")
+    if (( ${#clients[@]} )); then
+        compadd -a clients
+    else
+        _message 'no tdc client VMs found'
+    fi
+}
+
+_tdc_complete_vms() {
+    local -a vms
+    vms=("${(@f)$(_call_program tdc-vms tdc __complete vms 2>/dev/null)}")
+    if (( ${#vms[@]} )); then
+        compadd -a vms
+    else
+        _message 'no Lima VMs found'
+    fi
+}
+
+_tdc_complete_snapshot_tags() {
+    local -a args tags
+    local client vm word
+    local i
+
+    for (( i = 1; i <= ${#words[@]}; i++ )); do
+        word="${words[i]}"
+        case "${word}" in
+            --client)
+                if (( i < ${#words[@]} )); then
+                    client="${words[i + 1]}"
+                fi
+                ;;
+            --client=*)
+                client="${word#--client=}"
+                ;;
+            --vm)
+                if (( i < ${#words[@]} )); then
+                    vm="${words[i + 1]}"
+                fi
+                ;;
+            --vm=*)
+                vm="${word#--vm=}"
+                ;;
+        esac
+    done
+
+    if [[ -n "${client}" ]]; then
+        args+=(--client "${client}")
+    fi
+    if [[ -n "${vm}" ]]; then
+        args+=(--vm "${vm}")
+    fi
+
+    tags=("${(@f)$(_call_program tdc-snapshot-tags tdc __complete snapshot-tags "${args[@]}" 2>/dev/null)}")
+    if (( ${#tags[@]} )); then
+        compadd -a tags
+    else
+        _message 'no snapshots found'
+    fi
+}
+"#;
+
+pub fn complete<I>(args: I) -> Result<()>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    match args.next().as_deref() {
+        Some("clients") => complete_clients(),
+        Some("vms") => complete_vms(),
+        Some("snapshot-tags") => complete_snapshot_tags(parse_completion_target(args)),
+        _ => Ok(()),
+    }
+}
+
+fn complete_clients() -> Result<()> {
+    let clients = lima_vm_names()
+        .into_iter()
+        .filter_map(|vm| client_from_vm_name(&vm).map(str::to_owned))
+        .collect::<Vec<_>>();
+
+    print_completion_lines(clients)
+}
+
+fn complete_vms() -> Result<()> {
+    print_completion_lines(lima_vm_names())
+}
+
+fn complete_snapshot_tags(args: VmTargetArgs) -> Result<()> {
+    let Some(vm) = completion_target_vm(&args) else {
+        return Ok(());
+    };
+
+    print_completion_lines(snapshot_tags(&vm))
+}
+
+fn parse_completion_target<I>(args: I) -> VmTargetArgs
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut client = None;
+    let mut vm = None;
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--client" => client = args.next(),
+            "--vm" => vm = args.next(),
+            _ => {
+                if let Some(value) = arg.strip_prefix("--client=") {
+                    client = Some(value.to_owned());
+                } else if let Some(value) = arg.strip_prefix("--vm=") {
+                    vm = Some(value.to_owned());
+                }
+            }
+        }
+    }
+
+    VmTargetArgs { client, vm }
+}
+
+fn print_completion_lines(mut values: Vec<String>) -> Result<()> {
+    values.sort();
+    values.dedup();
+    for value in values {
+        println!("{value}");
+    }
+    Ok(())
+}
+
+fn lima_vm_names() -> Vec<String> {
+    if !process::command_exists("limactl") {
+        return Vec::new();
+    }
+
+    let Ok(output) = Command::new("limactl")
+        .arg("list")
+        .arg("--quiet")
+        .arg("--tty=false")
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| model::is_valid_slug(line))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn snapshot_tags(vm: &str) -> Vec<String> {
+    if !process::command_exists("limactl") {
+        return Vec::new();
+    }
+
+    let Ok(output) = Command::new("limactl")
+        .arg("snapshot")
+        .arg("list")
+        .arg(vm)
+        .arg("--quiet")
+        .arg("--tty=false")
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn client_from_vm_name(vm: &str) -> Option<&str> {
+    let client = vm.strip_prefix("client-")?;
+    if model::is_valid_slug(client) {
+        Some(client)
+    } else {
+        None
+    }
+}
+
+fn completion_target_vm(args: &VmTargetArgs) -> Option<String> {
+    match (&args.client, &args.vm) {
+        (Some(_), Some(_)) | (None, None) => None,
+        (Some(client), None) if model::is_valid_slug(client) => Some(model::vm_default(client)),
+        (None, Some(vm)) if model::is_valid_slug(vm) => Some(vm.clone()),
+        _ => None,
+    }
 }
 
 fn manpage(args: ManpageArgs) -> Result<()> {
@@ -1046,5 +1276,48 @@ fn print_next_steps(
         println!("  1. VS Code: Remote-SSH: Connect to Host -> {host}");
         println!("  2. Open folder: ~/work/{}", repo.repo);
         println!("  3. Command Palette: Dev Containers: Reopen in Container");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_client_prefix_for_client_completion() {
+        assert_eq!(client_from_vm_name("client-polymarket"), Some("polymarket"));
+        assert_eq!(
+            client_from_vm_name("client-client-polymarket"),
+            Some("client-polymarket")
+        );
+        assert_eq!(client_from_vm_name("polymarket"), None);
+    }
+
+    #[test]
+    fn parses_completion_target_flags() {
+        let target = parse_completion_target([
+            "--client".to_owned(),
+            "polymarket".to_owned(),
+            "--ignored".to_owned(),
+        ]);
+        assert_eq!(target.client.as_deref(), Some("polymarket"));
+        assert_eq!(target.vm.as_deref(), None);
+
+        let target = parse_completion_target(["--vm=client-polymarket".to_owned()]);
+        assert_eq!(target.client.as_deref(), None);
+        assert_eq!(target.vm.as_deref(), Some("client-polymarket"));
+    }
+
+    #[test]
+    fn zsh_completion_uses_dynamic_vm_completers() {
+        let script = zsh_completion_script().unwrap();
+        assert!(script.contains(":CLIENT:_tdc_complete_clients"));
+        assert!(script.contains(":VM:_tdc_complete_vms"));
+        assert!(script.contains(":TAG:_tdc_complete_snapshot_tags"));
+        assert!(script.contains("tdc __complete clients"));
+        assert!(!script.contains(":CLIENT:_default"));
+        assert!(!script.contains(":VM:_default"));
+        assert!(!script.contains("'__complete:"));
+        assert!(!script.contains("\n(__complete)"));
     }
 }
