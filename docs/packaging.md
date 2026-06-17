@@ -124,7 +124,7 @@ add the GitHub remote
 does not block local Git tag installs while `publish = false`, but it should be
 resolved before treating the repository as a public package.
 
-Before tagging:
+Before opening the release PR:
 
 ```bash
 cargo fmt --all -- --check
@@ -135,15 +135,35 @@ cargo package --locked --list
 cargo install --path . --locked
 ```
 
-Release:
+Release PR:
 
 ```bash
-git add .
+git checkout -b release/v0.1.1
+git add Cargo.toml Cargo.lock
 git commit -m "Release v0.1.1"
+git push origin release/v0.1.1
+```
+
+Open a pull request into `main`, label it `skip-changelog`, and merge it after
+CI passes. Normal feature, fix, documentation, and packaging changes should
+also merge through pull requests so GitHub can include them in generated release
+notes.
+
+Release tag:
+
+```bash
+git fetch origin main --tags
+git checkout main
+git pull --ff-only origin main
 git tag -a v0.1.1 -m "v0.1.1"
-git push origin main
 git push origin v0.1.1
 ```
+
+GitHub generates release notes from merged pull requests between the previous
+release tag and the new tag. Use the labels configured in `.github/release.yml`
+to place pull requests under release-note categories, and use `skip-changelog`
+or `ignore-for-release` for mechanical release PRs or changes that should not
+appear in the notes.
 
 If the protected publish job fails after the tag workflow has already prepared
 and reviewed release assets, fix the workflow on `main` and rerun the release
@@ -162,6 +182,10 @@ This repository includes two workflows:
 
 .github/workflows/release.yml
   Runs on v* tags and is split into prepare, review, and publish jobs.
+
+.github/release.yml
+  Configures GitHub's automatically generated release-note categories and
+  exclusions.
 ```
 
 The release workflow is modeled after
