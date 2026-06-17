@@ -332,11 +332,31 @@ node
   base + Node.js + npm + corepack/pnpm + native build prerequisites.
 
 solidity-foundry
-  base + Foundry + solc-select.
+  base + Foundry + solc-select + Hardhat Solidity VS Code extension.
 
 solidity-foundry-node
-  solidity-foundry + Node/npm/corepack/pnpm.
+  solidity-foundry + Node/npm/corepack/pnpm + Hardhat Solidity VS Code extension.
 ```
+
+## Codex CLI In Client VMs
+
+For Codex CLI, prefer installing and authenticating in the Lima VM shell, not
+inside the devcontainer. The default Codex installer writes the visible command
+to `~/.local/bin`, and `tdc` keeps that directory on the VM user's shell `PATH`.
+
+```bash
+tdc vm ssh --client exampleco
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+exec bash -l
+codex login --device-auth
+cd ~/work/protocol
+codex
+```
+
+The trusted devcontainer images also keep `/home/auditor/.local/bin` on `PATH`
+for user-installed tools. Do not authenticate Codex inside a devcontainer unless
+you intentionally accept exposing the Codex credential to repository-controlled
+code running in that container.
 
 ## Package Layout
 

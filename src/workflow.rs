@@ -459,6 +459,7 @@ fn vm_new(args: VmNewArgs) -> Result<()> {
         args.disk,
     )?;
     wait_for_ssh(&host)?;
+    ensure_vm_user_local_bin_path(&host)?;
 
     payload::sync_to_vm(&host)?;
     setup_vm_github_key(&host, &args.client, &key_name, &key_comment)?;
@@ -608,9 +609,11 @@ fn vm_key_remove(args: VmKeyRemoveArgs) -> Result<()> {
 fn vm_ssh(args: VmTargetArgs) -> Result<()> {
     process::require_commands(&["ssh"])?;
     let vm = target_vm(&args, "tdc vm ssh [--client <CLIENT>|--vm <VM>]")?;
+    let host = model::lima_host(&vm);
+    ensure_vm_user_local_bin_path(&host)?;
     process::run({
         let mut command = Command::new("ssh");
-        command.arg(model::lima_host(&vm));
+        command.arg(host);
         command
     })
 }
@@ -739,6 +742,7 @@ fn images_build(args: ImagesBuildArgs) -> Result<()> {
     let profile = args.profile.as_str();
 
     ensure_host_ssh_include()?;
+    ensure_vm_user_local_bin_path(&host)?;
     payload::sync_to_vm(&host)?;
     build_images_on_vm(&host, profile, &args.namespace, args.version.as_deref())?;
     ensure_built_images_available(&host, profile, &args.namespace, args.version.as_deref())
@@ -762,6 +766,7 @@ fn devcontainer_use(args: DevcontainerUseArgs) -> Result<()> {
     let host = model::lima_host(&vm);
 
     ensure_host_ssh_include()?;
+    ensure_vm_user_local_bin_path(&host)?;
     payload::sync_to_vm(&host)?;
     ensure_profile_image_available(&host, &args.profile, &args.client, &vm)?;
     apply_devcontainer_in_vm(&host, &repo.repo, &args.profile)
@@ -858,6 +863,36 @@ fn ensure_host_ssh_include() -> Result<()> {
 
     set_permissions(&config, 0o600)?;
     Ok(())
+}
+
+fn ensure_vm_user_local_bin_path(host: &str) -> Result<()> {
+    process::ssh_script(
+        host,
+        &[],
+        r##"set -euo pipefail
+
+mkdir -p "$HOME/.local/bin"
+
+for shell_file in "$HOME/.profile" "$HOME/.bashrc"; do
+  touch "${shell_file}"
+  if grep -qxF "# trusted-devcontainers:user-path:start" "${shell_file}"; then
+    continue
+  fi
+
+  cat >> "${shell_file}" <<'EOF'
+
+# trusted-devcontainers:user-path:start
+if [ -d "$HOME/.local/bin" ]; then
+  case ":$PATH:" in
+    *:"$HOME/.local/bin":*) ;;
+    *) export PATH="$HOME/.local/bin:$PATH" ;;
+  esac
+fi
+# trusted-devcontainers:user-path:end
+EOF
+done
+"##,
+    )
 }
 
 fn home_dir() -> Result<PathBuf> {

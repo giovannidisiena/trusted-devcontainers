@@ -13,6 +13,12 @@
     "FOUNDRY_DISABLE_NIGHTLY_WARNING": "true",
     "NPM_CONFIG_IGNORE_SCRIPTS": "true",
     "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "NomicFoundation.hardhat-solidity"
+      ]
+    }
   }
 }
-

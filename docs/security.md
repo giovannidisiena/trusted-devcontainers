@@ -85,6 +85,12 @@ This keeps the VM-local client key outside the devcontainer. If a workflow must
 push from inside a devcontainer, use only a temporary client-specific
 credential and remove or revoke it after use.
 
+Treat Codex CLI authentication the same way. Install and authenticate Codex in
+the VM shell for routine work so `~/.codex/auth.json` or credential-store access
+stays outside repository-controlled code running in the devcontainer. Only log
+in to Codex inside a devcontainer when you intentionally accept that exposure,
+and remove or revoke the credential afterward.
+
 ## GitHub SSH Host Keys
 
 `tdc` seeds each VM with GitHub's published SSH host keys before cloning over

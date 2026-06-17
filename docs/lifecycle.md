@@ -259,6 +259,23 @@ make test
 Do not add repo-sourced dependency installs or scripts to trusted
 `postCreateCommand` hooks for untrusted repositories.
 
+For Codex CLI, install and authenticate in the VM shell rather than inside the
+devcontainer:
+
+```bash
+tdc vm ssh --client exampleco
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+exec bash -l
+codex login --device-auth
+cd ~/work/protocol
+codex
+```
+
+`tdc` keeps `~/.local/bin` on the VM user's shell `PATH`, which is where the
+Codex standalone installer places the visible `codex` command by default. Keep
+Codex credentials outside the devcontainer unless you intentionally accept
+exposing them to repository-controlled code.
+
 Before risky commands, create a QEMU snapshot when snapshot support is
 available:
 
