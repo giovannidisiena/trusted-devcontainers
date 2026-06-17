@@ -14,9 +14,9 @@ use tempfile::Builder;
 
 use crate::cli::{
     Cli, Command as TdcCommand, DevcontainerCommand, DevcontainerUseArgs, ImagesBuildArgs,
-    ImagesCommand, ManpageArgs, RepoCommand, RepoDeleteArgs, VmClientTargetArgs, VmCommand,
-    VmDeleteArgs, VmKeyCommand, VmKeyRemoveArgs, VmNewArgs, VmSnapshotArgs, VmSnapshotCommand,
-    VmSnapshotTagArgs, VmStopArgs, VmTargetArgs,
+    ImagesCommand, ManpageArgs, RepoCommand, RepoDeleteArgs, VmClientTargetArgs, VmCodeOpenArgs,
+    VmCommand, VmDeleteArgs, VmKeyCommand, VmKeyRemoveArgs, VmNewArgs, VmSnapshotArgs,
+    VmSnapshotCommand, VmSnapshotTagArgs, VmStopArgs, VmTargetArgs,
 };
 use crate::github::{self, RepoSpec};
 use crate::model::{self, Profile};
@@ -32,6 +32,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 VmKeyCommand::Show(args) => vm_key_show(args),
                 VmKeyCommand::Remove(args) => vm_key_remove(args),
             },
+            VmCommand::Code(args) => vm_code(args),
             VmCommand::Ssh(args) => vm_ssh(args),
             VmCommand::Status(args) => vm_status(args),
             VmCommand::Start(args) => vm_start(args),
@@ -604,6 +605,274 @@ fn vm_key_remove(args: VmKeyRemoveArgs) -> Result<()> {
         &args.target.client,
         &github_key_name(&args.target.client),
     )
+}
+
+fn vm_code(args: VmCodeOpenArgs) -> Result<()> {
+    let target = prepare_code_target(&args)?;
+
+    if args.container {
+        let docker_host = remote_docker_host(&target.host)?;
+        let devcontainer_uri =
+            vscode_devcontainer_uri(&target.host, &target.vm_path, docker_host.as_deref())?;
+        return open_vscode_folder_uri(&devcontainer_uri, args.new_window, args.reuse_window);
+    }
+
+    open_vscode_folder_uri(&target.remote_ssh_uri, args.new_window, args.reuse_window)
+}
+
+struct CodeTarget {
+    host: String,
+    vm_path: String,
+    remote_ssh_uri: String,
+}
+
+fn prepare_code_target(args: &VmCodeOpenArgs) -> Result<CodeTarget> {
+    process::require_commands(&["limactl", "ssh"])?;
+    ensure_code_cli_available()?;
+
+    let vm = target_vm(
+        &args.target,
+        "tdc vm code [--container] [--client <CLIENT>|--vm <VM>] [--repo <REPO>|--repo-url <URL>|--path <PATH>]",
+    )?;
+    ensure_existing_vm_started(&vm)?;
+
+    let host = model::lima_host(&vm);
+    ensure_host_ssh_include()?;
+    wait_for_ssh(&host)?;
+
+    let vm_path = absolute_vm_path(&host, &code_path_arg(args)?)?;
+    ensure_vm_directory_exists(&host, &vm_path)?;
+    let remote_ssh_uri = vscode_remote_ssh_uri(&host, &vm_path);
+
+    Ok(CodeTarget {
+        host,
+        vm_path,
+        remote_ssh_uri,
+    })
+}
+
+fn ensure_code_cli_available() -> Result<()> {
+    if process::command_exists("code") {
+        return Ok(());
+    }
+
+    bail!(
+        "missing VS Code CLI on PATH: code\n\nIn VS Code, run:\n  Shell Command: Install 'code' command in PATH"
+    )
+}
+
+fn ensure_existing_vm_started(vm: &str) -> Result<()> {
+    ensure!(
+        vm_exists(vm)?,
+        "VM '{vm}' does not exist. Create it first with `tdc vm new`."
+    );
+
+    if vm_is_running(vm)? {
+        return Ok(());
+    }
+
+    process::run({
+        let mut command = Command::new("limactl");
+        command.arg("start").arg(vm);
+        command
+    })
+}
+
+fn code_path_arg(args: &VmCodeOpenArgs) -> Result<String> {
+    let repo_provided = args.repo.repo.is_some() || args.repo.repo_url.is_some();
+    let path_provided = args.path.is_some();
+
+    ensure!(
+        repo_provided || path_provided,
+        "provide one of --repo <REPO>, --repo-url <URL>, or --path <PATH>"
+    );
+    ensure!(
+        !(repo_provided && path_provided),
+        "--path cannot be used with --repo or --repo-url"
+    );
+
+    if let Some(path) = &args.path {
+        ensure!(!path.trim().is_empty(), "--path cannot be empty");
+        return Ok(path.clone());
+    }
+
+    let repo = github::resolve_repo_input(
+        &args.repo.org,
+        args.repo.repo.as_deref(),
+        args.repo.repo_url.as_deref(),
+    )?;
+    Ok(format!("~/work/{}", repo.repo))
+}
+
+fn absolute_vm_path(host: &str, path: &str) -> Result<String> {
+    if path == "~" {
+        return remote_home(host);
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        return Ok(join_remote_path(&remote_home(host)?, rest));
+    }
+    if path.starts_with('/') {
+        return Ok(path.to_owned());
+    }
+
+    Ok(join_remote_path(&remote_home(host)?, path))
+}
+
+fn remote_home(host: &str) -> Result<String> {
+    let home = process::capture({
+        let mut command = Command::new("ssh");
+        command.arg(host).arg("printf %s \"$HOME\"");
+        command
+    })?;
+    let home = home.trim();
+    ensure!(!home.is_empty(), "failed to resolve home directory in VM");
+    Ok(home.to_owned())
+}
+
+fn join_remote_path(base: &str, path: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
+fn ensure_vm_directory_exists(host: &str, path: &str) -> Result<()> {
+    let test_expr = format!("test -d {}", shell_quote(path));
+    let status = Command::new("ssh")
+        .arg(host)
+        .arg(test_expr)
+        .status()
+        .with_context(|| format!("failed to check VM path {path}"))?;
+
+    ensure!(
+        status.success(),
+        "VM path does not exist or is not a directory: {path}"
+    );
+    Ok(())
+}
+
+fn remote_docker_host(host: &str) -> Result<Option<String>> {
+    let output = Command::new("ssh")
+        .arg(host)
+        .arg(
+            r#"docker context inspect "$(docker context show)" --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null"#,
+        )
+        .output()
+        .with_context(|| format!("failed to inspect Docker context on {host}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let docker_host = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if docker_host.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(docker_host))
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn vscode_remote_ssh_uri(host: &str, path: &str) -> String {
+    format!(
+        "vscode-remote://ssh-remote+{}{}",
+        host,
+        uri_encode_path(path)
+    )
+}
+
+fn vscode_devcontainer_uri(
+    host: &str,
+    host_path: &str,
+    docker_host: Option<&str>,
+) -> Result<String> {
+    let workspace_path = default_devcontainer_workspace_path(host_path)?;
+    let authority_config = devcontainer_authority_config(host_path, docker_host);
+    Ok(format!(
+        "vscode-remote://dev-container+{}@ssh-remote+{}{}",
+        hex_encode(&authority_config),
+        host,
+        uri_encode_path(&workspace_path)
+    ))
+}
+
+fn devcontainer_authority_config(host_path: &str, docker_host: Option<&str>) -> String {
+    match docker_host {
+        Some(docker_host) => format!(
+            r#"{{"hostPath":{},"settings":{{"host":{}}}}}"#,
+            json_string(host_path),
+            json_string(docker_host)
+        ),
+        None => host_path.to_owned(),
+    }
+}
+
+fn json_string(value: &str) -> String {
+    let mut encoded = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => encoded.push_str("\\\""),
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            ch if ch.is_control() => encoded.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => encoded.push(ch),
+        }
+    }
+    encoded.push('"');
+    encoded
+}
+
+fn default_devcontainer_workspace_path(host_path: &str) -> Result<String> {
+    let name = host_path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .context("cannot derive devcontainer workspace path from VM path")?;
+    Ok(format!("/workspaces/{name}"))
+}
+
+fn hex_encode(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn uri_encode_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn open_vscode_folder_uri(uri: &str, new_window: bool, reuse_window: bool) -> Result<()> {
+    process::run({
+        let mut command = Command::new("code");
+        if new_window || !reuse_window {
+            command.arg("--new-window");
+        }
+        if reuse_window {
+            command.arg("--reuse-window");
+        }
+        command.arg("--folder-uri").arg(uri);
+        command
+    })
 }
 
 fn vm_ssh(args: VmTargetArgs) -> Result<()> {
@@ -1489,13 +1758,23 @@ fn print_next_steps(
             "  1. Build the profile image: tdc images build {} {target}",
             profile.as_str()
         );
-        println!("  2. VS Code: Remote-SSH: Connect to Host -> {host}");
-        println!("  3. Open folder: ~/work/{}", repo.repo);
-        println!("  4. Command Palette: Dev Containers: Reopen in Container");
+        println!(
+            "  2. Open VS Code over SSH: tdc vm code --client {client} --repo {}",
+            repo.repo
+        );
+        println!(
+            "  3. Open VS Code in the devcontainer: tdc vm code --container --client {client} --repo {}",
+            repo.repo
+        );
     } else {
-        println!("  1. VS Code: Remote-SSH: Connect to Host -> {host}");
-        println!("  2. Open folder: ~/work/{}", repo.repo);
-        println!("  3. Command Palette: Dev Containers: Reopen in Container");
+        println!(
+            "  1. Open VS Code over SSH: tdc vm code --client {client} --repo {}",
+            repo.repo
+        );
+        println!(
+            "  2. Open VS Code in the devcontainer: tdc vm code --container --client {client} --repo {}",
+            repo.repo
+        );
     }
 }
 
@@ -1569,5 +1848,60 @@ mod tests {
             build_target_selector("polymarket", "audit-polymarket"),
             "--vm audit-polymarket"
         );
+    }
+
+    #[test]
+    fn renders_vscode_remote_ssh_uri() {
+        assert_eq!(
+            vscode_remote_ssh_uri("lima-client-polymarket", "/home/a user/work/deposit-wallet"),
+            "vscode-remote://ssh-remote+lima-client-polymarket/home/a%20user/work/deposit-wallet"
+        );
+    }
+
+    #[test]
+    fn renders_vscode_devcontainer_uri() {
+        assert_eq!(
+            vscode_devcontainer_uri(
+                "lima-client-polymarket",
+                "/home/giodisiena.guest/work/deposit-wallet",
+                None
+            )
+            .unwrap(),
+            "vscode-remote://dev-container+2f686f6d652f67696f64697369656e612e67756573742f776f726b2f6465706f7369742d77616c6c6574@ssh-remote+lima-client-polymarket/workspaces/deposit-wallet"
+        );
+    }
+
+    #[test]
+    fn renders_vscode_devcontainer_uri_with_docker_host() {
+        assert_eq!(
+            vscode_devcontainer_uri(
+                "lima-client-polymarket",
+                "/home/giodisiena.guest/work/deposit-wallet",
+                Some("unix:///run/user/501/docker.sock")
+            )
+            .unwrap(),
+            "vscode-remote://dev-container+7b22686f737450617468223a222f686f6d652f67696f64697369656e612e67756573742f776f726b2f6465706f7369742d77616c6c6574222c2273657474696e6773223a7b22686f7374223a22756e69783a2f2f2f72756e2f757365722f3530312f646f636b65722e736f636b227d7d@ssh-remote+lima-client-polymarket/workspaces/deposit-wallet"
+        );
+    }
+
+    #[test]
+    fn derives_default_devcontainer_workspace_path() {
+        assert_eq!(
+            default_devcontainer_workspace_path("/home/auditor/work/protocol/").unwrap(),
+            "/workspaces/protocol"
+        );
+    }
+
+    #[test]
+    fn joins_remote_paths_without_duplicate_slashes() {
+        assert_eq!(
+            join_remote_path("/home/auditor/", "/work/deposit-wallet"),
+            "/home/auditor/work/deposit-wallet"
+        );
+    }
+
+    #[test]
+    fn shell_quotes_remote_paths() {
+        assert_eq!(shell_quote("/tmp/it's ok"), "'/tmp/it'\\''s ok'");
     }
 }

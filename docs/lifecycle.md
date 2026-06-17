@@ -116,11 +116,10 @@ Then press Enter in the `tdc` prompt.
 
 ## 4. Open In VS Code
 
-Use the values printed by `tdc`:
+Open over Remote SSH:
 
-```text
-VS Code: Remote-SSH: Connect to Host -> lima-client-exampleco
-Open folder: ~/work/protocol
+```bash
+tdc vm code --client exampleco --repo protocol
 ```
 
 VS Code will ask whether you trust the repository. This is expected.
@@ -128,6 +127,14 @@ VS Code will ask whether you trust the repository. This is expected.
 You can choose restricted mode first if you want to inspect the repository
 without enabling editor-driven code execution. Before running the devcontainer,
 trust the specific repository folder, then run:
+
+```bash
+tdc vm code --container --client exampleco --repo protocol
+```
+
+The devcontainer open path uses VS Code's Remote Containers URI format. If it
+does not open correctly, use `tdc vm code` and then run this from the command
+palette:
 
 ```text
 Dev Containers: Reopen in Container
@@ -233,12 +240,16 @@ Start the VM:
 tdc vm start --client exampleco
 ```
 
-Open VS Code:
+Open VS Code over Remote SSH:
 
-```text
-Remote-SSH: Connect to Host -> lima-client-exampleco
-Open folder: ~/work/protocol
-Dev Containers: Reopen in Container
+```bash
+tdc vm code --client exampleco --repo protocol
+```
+
+Open the devcontainer:
+
+```bash
+tdc vm code --container --client exampleco --repo protocol
 ```
 
 Inside the devcontainer, inspect first and run dependency installs manually.
