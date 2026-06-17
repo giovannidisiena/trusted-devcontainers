@@ -19,7 +19,7 @@ cargo install --path . --locked
 From a published Git tag:
 
 ```bash
-cargo install --git https://github.com/<org>/trusted-devcontainers --tag v0.1.2 --locked
+cargo install --git https://github.com/<org>/trusted-devcontainers --tag v0.1.3 --locked
 ```
 
 This installs the `tdc` binary into Cargo's bin directory, usually
