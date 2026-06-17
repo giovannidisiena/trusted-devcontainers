@@ -31,6 +31,9 @@ mkdir -p ~/.local/share/zsh/site-functions
 tdc completion zsh > ~/.local/share/zsh/site-functions/_tdc
 ```
 
+Zsh completions include live values for `--client`, `--vm`, and snapshot
+`--tag` when `limactl` can list the relevant VMs.
+
 Ensure zsh loads that directory:
 
 ```zsh
