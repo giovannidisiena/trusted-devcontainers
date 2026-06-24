@@ -274,6 +274,11 @@ pub struct RepoArgs {
 #[derive(Debug, Subcommand)]
 pub enum RepoCommand {
     #[command(
+        about = "List repository checkouts in a VM",
+        override_usage = "tdc repo list [--client <CLIENT>|--vm <VM>]"
+    )]
+    List(VmTargetArgs),
+    #[command(
         about = "Delete a repository checkout from a retained VM",
         override_usage = "tdc repo delete [OPTIONS] --client <CLIENT> [--repo <REPO>|--repo-url <URL>]"
     )]

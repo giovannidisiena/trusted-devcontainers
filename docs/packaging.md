@@ -97,13 +97,15 @@ exec zsh -l
 `tdc` does not edit shell startup files during installation.
 
 The generated zsh script includes dynamic completion for local Lima VM names,
-client slugs derived from `client-*` VM names, and snapshot tags.
+client slugs derived from `client-*` VM names, repo checkouts in a selected VM,
+and snapshot tags.
 
 After updating `tdc`, regenerate completion output and clear zsh's completion
 cache:
 
 ```bash
 tdc completion zsh > ~/.local/share/zsh/site-functions/_tdc
+rm -f ~/.local/share/zsh/site-functions/_tdc.zwc
 rm -f ~/.zcompdump*
 exec zsh -l
 ```

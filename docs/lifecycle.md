@@ -31,8 +31,9 @@ mkdir -p ~/.local/share/zsh/site-functions
 tdc completion zsh > ~/.local/share/zsh/site-functions/_tdc
 ```
 
-Zsh completions include live values for `--client`, `--vm`, and snapshot
-`--tag` when `limactl` can list the relevant VMs.
+Zsh completions include live values for `--client`, `--vm`, repo checkouts in a
+selected VM, and snapshot `--tag` when `limactl` and SSH can list the relevant
+VM state.
 
 Ensure zsh loads that directory:
 
@@ -416,6 +417,7 @@ Regenerate shell completions after updating:
 
 ```bash
 tdc completion zsh > ~/.local/share/zsh/site-functions/_tdc
+rm -f ~/.local/share/zsh/site-functions/_tdc.zwc
 rm -f ~/.zcompdump*
 exec zsh -l
 ```
