@@ -40,6 +40,7 @@ pub fn run(cli: Cli) -> Result<()> {
             VmCommand::Delete(args) => vm_delete(args),
         },
         TdcCommand::Repo(args) => match args.command {
+            RepoCommand::List(args) => repo_list(args),
             RepoCommand::Delete(args) => repo_delete(args),
         },
         TdcCommand::Images(args) => match args.command {
@@ -1060,6 +1061,14 @@ fn repo_delete(args: RepoDeleteArgs) -> Result<()> {
     delete_repo_in_vm(&host, &repo.repo, args.force)
 }
 
+fn repo_list(args: VmTargetArgs) -> Result<()> {
+    process::require_commands(&["ssh"])?;
+    let vm = target_vm(&args, "tdc repo list [--client <CLIENT>|--vm <VM>]")?;
+    let host = model::lima_host(&vm);
+
+    list_repos_in_vm(&host)
+}
+
 fn target_vm(args: &VmTargetArgs, usage: &str) -> Result<String> {
     if args.client.is_some() && args.vm.is_some() {
         bail!("the argument '--client <CLIENT>' cannot be used with '--vm <VM>'\n\nUsage: {usage}");
@@ -1438,6 +1447,44 @@ fi
 chmod -R o+rwX "${repo_dir}"
 
 git -C "${repo_dir}" status --short
+"#,
+    )
+}
+
+fn list_repos_in_vm(host: &str) -> Result<()> {
+    process::ssh_script(
+        host,
+        &[],
+        r#"set -euo pipefail
+
+work_dir="$HOME/work"
+
+if [[ ! -d "${work_dir}" ]]; then
+  echo "No repo checkouts found in ~/work"
+  exit 0
+fi
+
+shopt -s nullglob
+repos=()
+for repo_dir in "${work_dir}"/*; do
+  if [[ -d "${repo_dir}/.git" || -f "${repo_dir}/.git" ]]; then
+    repos+=("${repo_dir}")
+  fi
+done
+
+if [[ "${#repos[@]}" -eq 0 ]]; then
+  echo "No repo checkouts found in ~/work"
+  exit 0
+fi
+
+printf "%-32s %-24s %-48s %s\n" "NAME" "BRANCH" "REMOTE" "PATH"
+for repo_dir in "${repos[@]}"; do
+  name="$(basename "${repo_dir}")"
+  branch="$(git -C "${repo_dir}" symbolic-ref --quiet --short HEAD 2>/dev/null || git -C "${repo_dir}" rev-parse --short HEAD 2>/dev/null || printf "%s" "-")"
+  remote="$(git -C "${repo_dir}" remote get-url origin 2>/dev/null || printf "%s" "-")"
+  path="~/work/${name}"
+  printf "%-32s %-24s %-48s %s\n" "${name}" "${branch}" "${remote}" "${path}"
+done
 "#,
     )
 }
