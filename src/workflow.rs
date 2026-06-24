@@ -81,6 +81,7 @@ fn zsh_completion_script() -> Result<String> {
     let mut script = String::from_utf8(output).context("failed to render zsh completion")?;
     script = script.replace(":CLIENT:_default", ":CLIENT:_tdc_complete_clients");
     script = script.replace(":VM:_default", ":VM:_tdc_complete_vms");
+    script = script.replace(":REPO:_default", ":REPO:_tdc_complete_repos");
     script = script.replace(":TAG:_default", ":TAG:_tdc_complete_snapshot_tags");
     script.push_str(ZSH_DYNAMIC_COMPLETIONS);
     Ok(script)
@@ -149,6 +150,48 @@ _tdc_complete_snapshot_tags() {
         _message 'no snapshots found'
     fi
 }
+
+_tdc_complete_repos() {
+    local -a repos args
+    local client="" vm="" word
+    integer i
+
+    for (( i = 1; i <= ${#words[@]}; i++ )); do
+        word="${words[i]}"
+        case "${word}" in
+            --client)
+                if (( i < ${#words[@]} )); then
+                    client="${words[i + 1]}"
+                fi
+                ;;
+            --client=*)
+                client="${word#--client=}"
+                ;;
+            --vm)
+                if (( i < ${#words[@]} )); then
+                    vm="${words[i + 1]}"
+                fi
+                ;;
+            --vm=*)
+                vm="${word#--vm=}"
+                ;;
+        esac
+    done
+
+    if [[ -n "${client}" ]]; then
+        args+=(--client "${client}")
+    fi
+    if [[ -n "${vm}" ]]; then
+        args+=(--vm "${vm}")
+    fi
+
+    repos=("${(@f)$(_call_program tdc-repos tdc __complete repos "${args[@]}" 2>/dev/null)}")
+    if (( ${#repos[@]} )); then
+        compadd -a repos
+    else
+        _message 'no repo checkouts found'
+    fi
+}
 "#;
 
 pub fn complete<I>(args: I) -> Result<()>
@@ -159,6 +202,7 @@ where
     match args.next().as_deref() {
         Some("clients") => complete_clients(),
         Some("vms") => complete_vms(),
+        Some("repos") => complete_repos(parse_completion_target(args)),
         Some("snapshot-tags") => complete_snapshot_tags(parse_completion_target(args)),
         _ => Ok(()),
     }
@@ -175,6 +219,14 @@ fn complete_clients() -> Result<()> {
 
 fn complete_vms() -> Result<()> {
     print_completion_lines(lima_vm_names())
+}
+
+fn complete_repos(args: VmTargetArgs) -> Result<()> {
+    let Some(vm) = completion_target_vm(&args) else {
+        return Ok(());
+    };
+
+    print_completion_lines(repo_names(&vm))
 }
 
 fn complete_snapshot_tags(args: VmTargetArgs) -> Result<()> {
@@ -269,6 +321,34 @@ fn snapshot_tags(vm: &str) -> Vec<String> {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn repo_names(vm: &str) -> Vec<String> {
+    if !process::command_exists("ssh") {
+        return Vec::new();
+    }
+
+    let host = model::lima_host(vm);
+    let Ok(output) = Command::new("ssh")
+        .arg(host)
+        .arg("bash")
+        .arg("-lc")
+        .arg(r#"shopt -s nullglob; for repo_dir in "$HOME"/work/*; do if [[ -d "${repo_dir}/.git" || -f "${repo_dir}/.git" ]]; then basename "${repo_dir}"; fi; done"#)
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| model::is_valid_slug(line))
         .map(str::to_owned)
         .collect()
 }
@@ -1864,10 +1944,13 @@ mod tests {
         let script = zsh_completion_script().unwrap();
         assert!(script.contains(":CLIENT:_tdc_complete_clients"));
         assert!(script.contains(":VM:_tdc_complete_vms"));
+        assert!(script.contains(":REPO:_tdc_complete_repos"));
         assert!(script.contains(":TAG:_tdc_complete_snapshot_tags"));
         assert!(script.contains("tdc __complete clients"));
+        assert!(script.contains("tdc __complete repos"));
         assert!(!script.contains(":CLIENT:_default"));
         assert!(!script.contains(":VM:_default"));
+        assert!(!script.contains(":REPO:_default"));
         assert!(!script.contains("'__complete:"));
         assert!(!script.contains("\n(__complete)"));
     }
