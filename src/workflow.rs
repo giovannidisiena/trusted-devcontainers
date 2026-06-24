@@ -1432,6 +1432,11 @@ else
   git clone "${clone_url}" "${repo_dir}"
 fi
 
+# Hardened devcontainers can see Lima bind mounts as root-owned even when the VM
+# user owns them. Keep the checkout writable by the remoteUser for dependency
+# installs, build outputs, and Git metadata updates.
+chmod -R o+rwX "${repo_dir}"
+
 git -C "${repo_dir}" status --short
 "#,
     )
